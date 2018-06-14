@@ -1,0 +1,42 @@
+# event configuration version
+version: 0.1
+
+# event definition format:
+#       - event_name:
+#               trigger: [ud10x]{16}
+#               [function: [start,stop,dump_begin,dump_end]]
+#
+# triggers:
+#       u:      rising edge
+#       d:      falling edge
+#       1:      high
+#       0:      low
+#       *:      everything else is interpreted as "don't care"
+#
+# functions:
+#       start:          start event detection / recording
+#       stop:           stop recording
+#       dump_begin:     trigger on signal changes
+#       dump_end:       stop triggering on all signal changes      
+
+# event configuration
+events: 
+  - start:
+          trigger: u
+          func: start
+
+  - stop:
+          trigger: xxxxxxxd
+          func: stop
+
+  - event1:
+          trigger: 0000000000000001
+
+  - event2_up:
+          trigger: 00u
+          func: dump_begin
+
+  - event2_down:
+          trigger: 00d
+          func: dump_end,stop
+
