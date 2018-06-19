@@ -23,20 +23,22 @@ version: 0.1
 events: 
   - start:
           trigger: u
-          func: start
+          function: start
 
   - stop:
-          trigger: xxxxxxxd
-          func: stop
+          trigger: d
+          function: stop
 
-  - event1:
-          trigger: 0000000000000001
+  - dump_s:
+          trigger: 1u
+          function: dump_begin 
 
-  - event2_up:
-          trigger: 00u
-          func: dump_begin
+  - dump_e:
+          trigger: 1d
+          function: dump_end
 
-  - event2_down:
-          trigger: 00d
-          func: dump_end,stop
+  - clk_up:
+          trigger: xxu
 
+  - clk_down:
+          trigger: xxd

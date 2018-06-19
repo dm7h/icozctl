@@ -164,7 +164,7 @@ void prog_bitstream(bool reset_only = false)
 		}
 
 		if (verbose && !(k % 1024) && k)
-			printf("%3d kB written.\n", k / 1024);
+			fprintf(stdout,"%3d kB written.\n", k / 1024);
 	}
 
 	for (int i = 0; i < 49; i++) {
@@ -312,7 +312,7 @@ void prog_flasherase()
 	spi_end();
 }
 
-void prog_flashmem(int pageoffset, bool erase_first_block)
+void prog_flashmem(int pageoffset, bool erase_first_block, int no_check)
 {
 	assert(enable_prog_port);
 
@@ -393,8 +393,11 @@ void prog_flashmem(int pageoffset, bool erase_first_block)
 			flash_write(addr + pageoffset * 0x10000, &prog_data[addr], n);
 			ms_timer += flash_wait();
 
-			// short cut (TODO: remove!)
-			goto written_ok;
+			// don't check flash
+			if (no_check) {
+				fprintf(stderr, ".");
+				goto written_ok;
+			}
 
 			flash_read(addr + pageoffset * 0x10000, buffer, n);
 
@@ -454,7 +457,7 @@ void read_flashmem(int n)
 	for (int addr = 0; addr < n; addr += 256) {
 		uint8_t buffer[256];
 		flash_read(addr, buffer, std::min(256, n - addr));
-		fwrite(buffer, std::min(256, n - addr), 1, stdout);
+		fwrite(buffer, std::min(256, n - addr), 1, stderr);
 	}
 
 	// power_down
@@ -523,7 +526,7 @@ void spi_init(void)
 
 	/* open the device */
 	fd = open("/dev/spidev0.0", O_RDWR);
-	if (fd < 0)
+	if (fd < 0 && verbose)
 		fprintf(stderr,"Can't open SPI device\n");
 
 	/* set config options */
@@ -531,32 +534,33 @@ void spi_init(void)
 	// mode
 	ret = ioctl(fd, SPI_IOC_WR_MODE, &spi_mode);
 	ret = ioctl(fd, SPI_IOC_RD_MODE, &spi_mode);
-	if (ret == -1)
+	if ((ret == -1) && verbose)
 		fprintf(stderr,"can't get spi mode\n");
 
 	// bits per word
 	ret = ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &spi_bits);
 	ret = ioctl(fd, SPI_IOC_RD_BITS_PER_WORD, &spi_bits);
-	if (ret == -1)
+	if ((ret == -1) && verbose)
 		fprintf(stderr,"can't get bits per word\n");
 
 	// max speed hz
 	ret = ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &spi_speed);
 	ret = ioctl(fd, SPI_IOC_RD_MAX_SPEED_HZ, &spi_speed);
-	if (ret == -1)
+	if ((ret == -1) && verbose)
 		fprintf(stderr,"can't get max speed hz\n");
 
 	// lsb first
 	ret = ioctl(fd, SPI_IOC_WR_LSB_FIRST, &spi_lsb);	
 	ret = ioctl(fd, SPI_IOC_RD_LSB_FIRST, &spi_lsb);
-	if (ret == -1)
+	if ((ret == -1) && verbose)
 		fprintf(stderr,"can't get LSB_FIRST\n");
 
-	/* print configuration */
-	fprintf(stdout, "\n===\nSPI Configuration:\nspi mode: %d\n", spi_mode);
-	fprintf(stdout, "bits per word: %d (LSB_FIRST: %d)\n", spi_bits, spi_lsb);
-	fprintf(stdout, "max speed: %d Hz (%d KHz)\n", spi_speed, spi_speed/1000);
-	
+	if (verbose) {
+		/* print configuration */
+		fprintf(stderr, "SPI Configuration:\nspi mode: %d\n", spi_mode);
+		fprintf(stderr, "bits per word: %d (LSB_FIRST: %d)\n", spi_bits, spi_lsb);
+		fprintf(stderr, "max speed: %d Hz (%d KHz)\n", spi_speed, spi_speed/1000);
+	}
 
 }
 
@@ -576,7 +580,7 @@ void spi_xfer(uint8_t* tx, uint8_t* rx)
 
 	// send it and check for error
 	ret = ioctl(fd, SPI_IOC_MESSAGE(1), &tr);
-	if (ret < 1)
+	if (ret < 1 && verbose)
 		fprintf(stderr, "can't send spi message");
 
 }
@@ -591,10 +595,9 @@ void run_config(char* config_file)
 	
 	/* read events from config file */
 	YAML::Node config = YAML::LoadFile(config_file);
-	if (config["version"]) {
-		fprintf(stdout, "Reading config file (version: %s) ...\n", config["version"].as<std::string>().c_str());
+	if (config["version"] && verbose) 
+		fprintf(stderr, "Reading config file (version: %s) ...\n", config["version"].as<std::string>().c_str());
 	
-	}
 
 	if (config["events"] ) {
 		YAML::const_iterator it = config["events"].begin();
@@ -606,27 +609,27 @@ void run_config(char* config_file)
 				// event name, must always exist
 				std::string ev_name = ev_it->first.as<std::string>(); 
 				if (verbose)
-					fprintf(stdout, "==Event %d==\n name: %s\n", id, ev_name.c_str());
+					fprintf(stderr, "Event %d:\nname: %s\n", id, ev_name.c_str());
 				
 				// event trigger, must also exist
 				std::string ev_trigger = ev_it->second["trigger"].as<std::string>();
 				if (verbose)	
-					fprintf(stdout, "trigger: %s\n", ev_trigger.c_str());
+					fprintf(stderr, "trigger: %s\n", ev_trigger.c_str());
 				
 				uint8_t ev_flag = 0;	
-				if (ev_it->second["func"]) {
+				if (ev_it->second["function"]) {
 					// event func, if it exists
-					std::string ev_func = ev_it->second["func"].as<std::string>();
+					std::string ev_func = ev_it->second["function"].as<std::string>();
 					if (verbose)	
-						fprintf(stdout, "func: %s\n", ev_func.c_str());
+						fprintf(stderr, "function: %s\n", ev_func.c_str());
 					if (ev_func.find("start") != std::string::npos)
-						ev_flag |= 1;
+						ev_flag |= 3;
 					else if (ev_func.find("stop") != std::string::npos)
-						ev_flag |= 2;
+						ev_flag |= 1;
 					if (ev_func.find("dump_begin") != std::string::npos)
-						ev_flag |= 4;
+						ev_flag |= 7;
 					else if (ev_func.find("dump_end") != std::string::npos)
-						ev_flag |= 8;
+						ev_flag |= 3;
 				}
 		
 				uint64_t enc = 0;
@@ -634,27 +637,27 @@ void run_config(char* config_file)
 				enc |= ((uint64_t) ev_flag) << 48;	
 				
 				for (unsigned int i = 0; i < 16; i++) {
-					uint8_t trigger_flag[3] = {1,1,1}; // don't care
+					uint8_t trigger_flag[3] = {0,0,0}; // don't care
 					if (i <= ev_trigger.size() - 1) {
 					       switch(ev_trigger[i]) {
 						       case '0': 
-							       trigger_flag[0] = 0; 
+							       trigger_flag[0] = 1; 
 							       trigger_flag[1] = 0; 
 							       trigger_flag[2] = 0; 
 							       break;
 						       case '1': 
-					       		       trigger_flag[0] = 0; 
+					       		       trigger_flag[0] = 1; 
 							       trigger_flag[1] = 1; 
 							       trigger_flag[2] = 1; 
 							       break;
 							case 'u':
-							       trigger_flag[0] = 0; 
+							       trigger_flag[0] = 1; 
 							       trigger_flag[1] = 0; 
 							       trigger_flag[2] = 1; 
 							       break;
 						 
 						       case 'd': 
-					       		       trigger_flag[0] = 0; 
+					       		       trigger_flag[0] = 1; 
 							       trigger_flag[1] = 1; 
 							       trigger_flag[2] = 0; 
 							       break;
@@ -663,16 +666,19 @@ void run_config(char* config_file)
 					}
 				       	//std::cout << ev_trigger[i] << ":" << std::bitset<64>(((uint64_t) trigger_flag) << ((15 - i) * 3)) << std::endl;	
 					// xmask
-					enc |= ((uint64_t) trigger_flag[0]) << (47 - i);
+					//enc |= ((uint64_t) trigger_flag[0]) << (47 - i);
+					enc |= ((uint64_t) trigger_flag[0]) << (32 + i);
 					// match last input
-					enc |= ((uint64_t) trigger_flag[1]) << (31 - i);
+					//enc |= ((uint64_t) trigger_flag[1]) << (31 - i);
+					enc |= ((uint64_t) trigger_flag[1]) << (16 + i);
 					// match current input
-					enc |= ((uint64_t) trigger_flag[2]) << (15 - i);
+					//enc |= ((uint64_t) trigger_flag[2]) << (15 - i);
+					enc |= ((uint64_t) trigger_flag[2]) << (0 + i);
 				}		
 				
 				if (verbose) {
-					std::cout << "encoded: " << std::bitset<64>(enc) << std::endl;	
-					fprintf(stdout, "encoded: %016llx \n", enc);
+					//std::cerr << "encoded: " << std::bitset<64>(enc) << std::endl;	
+					fprintf(stderr, "encoded: %016llx \n", enc);
 				}
 				events.push_back(enc);
 				id++;
@@ -682,9 +688,10 @@ void run_config(char* config_file)
 	}
 
 	/* send encoded event configs */
-	for (int i = 0; i < events.size(); i++) {
+	for (unsigned int i = 0; i < events.size(); i++) {
 		
-		fprintf(stdout, "---\nSPI: sending event %d: %016llx\n", i, events[i]);
+		if (verbose)
+			fprintf(stderr, "---\nSPI: sending event %d: %016llx\n", i, events[i]);
 		
 		// receive buffer
 		uint8_t rx[16] = {0, };
@@ -722,14 +729,17 @@ void run_config(char* config_file)
 
 
 		// show what we got back
-		fprintf(stdout, "SPI: returned:");
+		if (verbose) {
+		
+			fprintf(stderr, "SPI: returned:");
 
-		for (ret = 0; ret < ARRAY_SIZE(rx); ret++) {
-			if (!(ret % 16))
-				puts("");
-			printf("%.2X ", rx[ret]);
+			for (ret = 0; (unsigned) ret < ARRAY_SIZE(rx); ret++) {
+				if (!(ret % 16))
+					puts("");
+				printf("%.2X ", rx[ret]);
+			}
+			puts("");
 		}
-		puts("");
 		
 		// icosoc will print the results on the debug uart
 		// give it some time to process ..	
@@ -743,7 +753,7 @@ void run_config(char* config_file)
 /* prepare recording */
 void spi_prepare_rec(void)
 {
-	if (verbose) fprintf(stdout, "resetting counter and clearing fifos .");	
+	if (verbose) fprintf(stderr, "resetting counter and clearing fifos .");	
 	
 	// send reset command
 	uint8_t rx[4], tx[4] = {0,0,0,2};
@@ -752,18 +762,21 @@ void spi_prepare_rec(void)
 	}
 	
 	// wait for 0xFF signaling all buffer entries have been cleared
-	while (rx[0] != 0xFF) {
+	tx[3] = 0;
+	while (rx[0] != 0x00) {
 		spi_xfer(tx,rx);
-		if (verbose) fprintf(stdout, ".");
+		if (verbose) fprintf(stderr, ".");
 		usleep(100000);
 	}
-	if (verbose) fprintf(stdout, ".\n");
+	if (verbose) fprintf(stderr, ".\n");
 	
 	// catch trailing 0xFF's if any ..
-	for (int i = 0; i < 16; i++) {
+	/*
+	for (int i = 0; i < 32; i++) {
 		spi_xfer(tx,rx);
 		usleep(100000);
 	}
+	*/
 }
 
 
@@ -771,10 +784,37 @@ void spi_prepare_rec(void)
 
 void spi_stop_rec(void)
 {
-	if (verbose) fprintf(stdout, "stopping recording .");	
+	if (verbose) fprintf(stderr, "stopping recording ..");	
 	
-	// send reset command
+	// send stop command
 	uint8_t rx[4], tx[4] = {0,0,0,3};
+	for (int i = 0; i < 4; i++) {
+		spi_xfer(tx,rx);
+	}	
+}
+
+/* start recording */
+
+void spi_start_rec(void)
+{
+	if (verbose) fprintf(stderr, "start recording ..");	
+	
+	// send start command
+	uint8_t rx[4], tx[4] = {0,0,0,4};
+	for (int i = 0; i < 4; i++) {
+		spi_xfer(tx,rx);
+	}	
+}
+
+
+/* start dump (event filter disabled) */
+
+void spi_start_dump(void)
+{
+	if (verbose) fprintf(stderr, "start dump (event filter disabled) ..\n");	
+	
+	// send start command
+	uint8_t rx[4], tx[4] = {0,0,0,5};
 	for (int i = 0; i < 4; i++) {
 		spi_xfer(tx,rx);
 	}	
@@ -796,12 +836,13 @@ void intHandler(int d)
 }
 
 
-void spi_record(char* out_file)
+void spi_record(char* out_file, int number_samples = 0)
 {
 	
 	FILE* fout = fopen(out_file, "w");
 	if (fout == NULL) {
-		fprintf(stderr, "Can't open output file: %s\n", out_file);
+		if (verbose)
+			fprintf(stderr, "Can't open output file: %s\n", out_file);
 		return;
 	}
 
@@ -840,8 +881,14 @@ void spi_record(char* out_file)
 	// setup transmit buffer with data retreive command
 	uint8_t tx[4] = { 0 };
 		
-	
-	while (loop) 
+	// print csv-ish header
+	fprintf(stdout, "time_in_ns,");
+	for (int i = 15; i >= 0; i--) 
+		fprintf(stdout, "pin_%d%s", i, (i==0)? "": ",");
+	fprintf(stdout, "\n");
+
+	int recorded_samples = 0;
+	while (loop && !(number_samples && (number_samples == recorded_samples))) 
 	{
 		// clear rx buffer
 		memset(rx, 0, sizeof(rx));
@@ -852,23 +899,33 @@ void spi_record(char* out_file)
 
 		// print results if we got some
 		if ((rx[7] > 0) || (rx[6] > 0) || (rx[5] > 0) || (rx[4] > 0 ) || (rx[3] > 0) || (rx[2] > 0)) {
-			for (int i = 0; i < 8; i++)
-				printf("%.2x ", rx[i]);
+			// get timestamp
 			uint64_t ts =  rx[7] + (rx[6] << 8) + (rx[5] << 16); 
 			ts |= (uint64_t) rx[4] << 24; 
 			ts |= (uint64_t) rx[3] << 32; 
 			ts |= (uint64_t) rx[2] << 40;
-			fprintf(fout, "#%llu\n", ts);
-			printf(" #%llu\n", ts);
+			fprintf(fout, "#%llu\n", ts); // vcd
+			printf("%llu0,", ts); // csv
+			
+			//fprintf(stdout, "%02x,%02x,", rx[0], rx[1]); // io bytes
+			// print io bytes as single bits (csv)
+			for (int i = 0; i < 2; i++) {
+				for (int j = 7; j >= 0; j--)
+					printf("%d%s", (rx[i] & (1 << j))? 1 : 0, ((i==1)&&(j==0))? "" : ",");
+			}
+			printf("\n");
+
+			// same for vcd
 			for (int i = 0; i < 16; i++)
 				fprintf(fout, "%d%c\n", (((rx[0] << 8) + rx[1]) & (1 << i))? 1 : 0, (char) i + 33);
 			//fprintf(fout, "%s #\n", std::bitset<16>((rx[0] << 8) + rx[1]).to_string().c_str()); 
+			recorded_samples++;
 
 		}
-		usleep(100000);	
+		usleep(80000);	
 	}
 
-	printf("rec done\n");
+	printf("\nrecording finished\n");
 	fclose(fout);
 
 
@@ -905,9 +962,24 @@ void help(const char *progname)
 	fprintf(stderr, "Reading serial flash (first N bytes):\n");
 	fprintf(stderr, "    %s -F N > data.bin\n", progname);
 	fprintf(stderr, "\n");
+	fprintf(stderr, "Start recording in event detection mode:\n");
+	fprintf(stderr, "    %s -s [-o events.vcd]\n", progname);
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Start recording in dump mode:\n");
+	fprintf(stderr, "    %s -S [-o events.vcd]\n", progname);
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Read a event configuration file and send it to the FPGA:\n");
+	fprintf(stderr, "    %s -c config.yaml\n", progname);
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Write the recorded events to a VCD file:\n");
+	fprintf(stderr, "    %s -o events.vcd\n", progname);
+	fprintf(stderr, "\n");
 	fprintf(stderr, "Additional options:\n");
 	fprintf(stderr, "    -v      verbose output\n");
-	fprintf(stderr, "    -O N    offset (in 64 kB pages) for -f and -e\n");
+	fprintf(stderr, "    -x      don't check flash contents after writing them\n");
+	fprintf(stderr, "            (slightly faster operation with -f)\n");
+	fprintf(stderr, "    -O n    offset (in 64 kB pages) for -f, -F and -e\n");
+	fprintf(stderr, "    -N n    number of events to record for -o\n");
 	fprintf(stderr, "\n");
 	exit(1);
 }
@@ -922,13 +994,17 @@ int main(int argc, char **argv)
 	/* parsing options */	
 	int opt, n = -1;
 	int pageoffset = 0;
-	int reset_counter = 0;
+	int number_samples = 0;
+	int start_rec = 0;
+	int start_dump = 0;
+	int no_check = 0;
+	//int reset_counter = 0;
 	char mode = 0;
-	char *config_file;
-	char *out_file;
+	char *config_file = NULL;
+	char *out_file = NULL;
 
 
-	while ((opt = getopt(argc, argv, "RbErpfevF:c:o:O:")) != -1)
+	while ((opt = getopt(argc, argv, "RbErpfevsSF:c:o:O:N:")) != -1)
 	{
 		switch (opt)
 		{
@@ -956,10 +1032,27 @@ int main(int argc, char **argv)
 			break;
 
 		case 'r':
-			reset_counter = true;
+			//reset_counter = true;
+			break;
+		
+		case 's':
+			start_rec = 1;
+			break;
+		
+		case 'S':
+			start_dump = 1;
+			break;
+		
+		case 'x':
+			no_check = 1;
+			break;
 
 		case 'O':
 			pageoffset = atoi(optarg);
+			break;
+
+		case 'N':
+			number_samples = atoi(optarg);
 			break;
 
 		default:
@@ -1006,7 +1099,7 @@ int main(int argc, char **argv)
 		enable_prog_port = true;
 		wiringPiSetup();
 		reset_inout();
-		prog_flashmem(pageoffset, false);
+		prog_flashmem(pageoffset, false, no_check);
 		reset_inout();
 	}
 
@@ -1014,7 +1107,7 @@ int main(int argc, char **argv)
 		enable_prog_port = true;
 		wiringPiSetup();
 		reset_inout();
-		prog_flashmem(pageoffset, true);
+		prog_flashmem(pageoffset, true, no_check);
 		reset_inout();
 	}
 
@@ -1040,7 +1133,9 @@ int main(int argc, char **argv)
 		spi_init();
 		if (config_file) run_config(config_file);
 		spi_prepare_rec();
-		spi_record(out_file);
+		if (start_rec) spi_start_rec();
+		if (start_dump) spi_start_dump();
+		spi_record(out_file, number_samples);
 		spi_stop_rec();
 		spi_close();
 	}
